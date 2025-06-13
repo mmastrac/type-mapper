@@ -1,19 +1,28 @@
 #![doc = include_str!("../README.md")]
 use std::collections::HashMap;
 
-use proc_macro::{TokenStream, TokenTree};
+use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{braced, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, token, GenericArgument, PathArguments, Token};
+use syn::{
+    braced,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    token, GenericArgument, PathArguments, Token,
+};
 
 struct TypeMatch {
+    #[allow(unused)]
     match_token: Token![match],
     match_type: syn::Type,
+    #[allow(unused)]
     brace_token: token::Brace,
     arms: Punctuated<TypeMatchArm, Token![,]>,
 }
 
 struct TypeMatchArm {
     pattern: syn::Type,
+    #[allow(unused)]
     fat_arrow: Token![=>],
     result: syn::Type,
 }
@@ -42,17 +51,27 @@ impl Parse for TypeMatchArm {
 
 #[derive(Default, Clone)]
 struct Wildcards {
-    wildcards: HashMap<String, proc_macro2::TokenStream>,
+    wildcards: HashMap<String, syn::Type>,
+    lifetimes: HashMap<String, syn::Lifetime>,
 }
 
 impl Wildcards {
     fn track_wildcard(&mut self, arg: &str, input: &impl ToTokens) {
-        self.wildcards.insert(arg.to_string(), input.to_token_stream());
+        self.wildcards.insert(
+            arg.to_string(),
+            syn::parse2(input.to_token_stream()).expect("Failed to parse a type"),
+        );
+    }
+
+    fn track_lifetime(&mut self, arg: &str, input: &impl ToTokens) {
+        self.wildcards.insert(
+            arg.to_string(),
+            syn::parse2(input.to_token_stream()).expect("Failed to parse a lifetime"),
+        );
     }
 }
-
 /// Attempts to match the input type with the pattern type. If there's a match, returns the templated generics:
-/// 
+///
 ///  - `_`, `_X` are wildcard types (optionally named)
 ///  - `__`, `__X` are multi-generic wildcards (optionally named)
 ///  - `'_`, `'_X` are lifetime wildcards (optionally named)
@@ -61,11 +80,15 @@ fn match_type(input: &syn::Type, pattern: &syn::Type) -> Result<Wildcards, &'sta
 }
 
 /// Attempts to match the input type with the pattern type. If there's a match, returns the templated generics:
-/// 
+///
 ///  - `_`, `_X` are wildcard types (optionally named)
 ///  - `__`, `__X` are multi-generic wildcards (optionally named)
 ///  - `'_`, `'_X` are lifetime wildcards (optionally named)
-fn match_type_recursive(mut input: &syn::Type, mut pattern: &syn::Type, wildcards: &mut Wildcards) -> Result<Wildcards, &'static str> {
+fn match_type_recursive(
+    mut input: &syn::Type,
+    mut pattern: &syn::Type,
+    wildcards: &mut Wildcards,
+) -> Result<Wildcards, &'static str> {
     #![cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
 
     while let Group(grouped_input) = input {
@@ -84,7 +107,8 @@ fn match_type_recursive(mut input: &syn::Type, mut pattern: &syn::Type, wildcard
         }
 
         (Array(input), Array(pattern)) => {
-            if input.len.to_token_stream().to_string() != pattern.len.to_token_stream().to_string() {
+            if input.len.to_token_stream().to_string() != pattern.len.to_token_stream().to_string()
+            {
                 Err("Array length mismatch")
             } else {
                 match_type_recursive(&input.elem, &pattern.elem, wildcards)
@@ -100,27 +124,31 @@ fn match_type_recursive(mut input: &syn::Type, mut pattern: &syn::Type, wildcard
                 Ok(wildcards.clone())
             }
         }
-        (Group(input), Group(pattern)) => {
+        (Group(_), Group(_)) => {
             panic!("Groups should not exist at this point");
         }
         (ImplTrait(input), ImplTrait(pattern)) => {
-            panic!("ImplTrait types not supported: {:?} {:?}", input.to_token_stream().to_string(), pattern.to_token_stream().to_string());
+            panic!(
+                "ImplTrait types not supported: {:?} {:?}",
+                input.to_token_stream().to_string(),
+                pattern.to_token_stream().to_string()
+            );
         }
         (Macro(input), Macro(pattern)) => {
-            panic!("Macro types not supported: {:?} {:?}", input.to_token_stream().to_string(), pattern.to_token_stream().to_string());
+            panic!(
+                "Macro types not supported: {:?} {:?}",
+                input.to_token_stream().to_string(),
+                pattern.to_token_stream().to_string()
+            );
         }
-        (Never(_), Never(_)) => {
-            Ok(wildcards.clone())
-        }
+        (Never(_), Never(_)) => Ok(wildcards.clone()),
         (Paren(input), Paren(pattern)) => {
             match_type_recursive(&input.elem, &pattern.elem, wildcards)
         }
         (Path(input_path), Path(pattern_path)) => {
-            match_type_path(&input,&input_path.path, &pattern_path.path, wildcards)
+            match_type_path(&input_path.path, &pattern_path.path, wildcards)
         }
-        (Ptr(input), Ptr(pattern)) => {
-            match_type_recursive(&input.elem, &pattern.elem, wildcards)
-        }
+        (Ptr(input), Ptr(pattern)) => match_type_recursive(&input.elem, &pattern.elem, wildcards),
         (Reference(input), Reference(pattern)) => {
             match_type_recursive(&input.elem, &pattern.elem, wildcards)
         }
@@ -128,7 +156,11 @@ fn match_type_recursive(mut input: &syn::Type, mut pattern: &syn::Type, wildcard
             match_type_recursive(&input.elem, &pattern.elem, wildcards)
         }
         (TraitObject(input), TraitObject(pattern)) => {
-            panic!("TraitObject types not supported: {:?} {:?}", input.to_token_stream().to_string(), pattern.to_token_stream().to_string());
+            panic!(
+                "TraitObject types not supported: {:?} {:?}",
+                input.to_token_stream().to_string(),
+                pattern.to_token_stream().to_string()
+            );
         }
         (Tuple(input), Tuple(pattern)) => {
             if input.elems.len() != pattern.elems.len() {
@@ -141,25 +173,31 @@ fn match_type_recursive(mut input: &syn::Type, mut pattern: &syn::Type, wildcard
             }
         }
         (Verbatim(input), Verbatim(pattern)) => {
-            panic!("Verbatim types not supported: {:?} {:?}", input.to_token_stream().to_string(), pattern.to_token_stream().to_string());
+            panic!(
+                "Verbatim types not supported: {:?} {:?}",
+                input.to_token_stream().to_string(),
+                pattern.to_token_stream().to_string()
+            );
         }
-        _ => {
-            Err("Type shapes are not the same")
-        }
+        _ => Err("Type shapes are not the same"),
     }
 }
 
 /// The core of the type matching logic. Most of the interesting matches happen here.
-/// 
+///
 /// Some examples:
-/// 
+///
 ///  - _T matches every type, with or without generics
 ///  - _T<> matches every type, without generics
 ///  - _T<_> matches every type, with a single generic
 ///  - _T<__> matches every type with any number of generics (0..infinity)
 ///  - _T<'_, _> matches any type with one lifetime parameter and one generic
 ///  - _T<___> matches any number of lifetime parameters and generics (0..infinity)
-fn match_type_path(full_input: &syn::Type, input: &syn::Path, pattern: &syn::Path, wildcards: &mut Wildcards) -> Result<Wildcards, &'static str> {
+fn match_type_path(
+    input: &syn::Path,
+    pattern: &syn::Path,
+    wildcards: &mut Wildcards,
+) -> Result<Wildcards, &'static str> {
     let mut is_wildcard = false;
     if pattern.segments.len() == 1 {
         if let Some(first) = pattern.segments.first() {
@@ -187,8 +225,17 @@ fn match_type_path(full_input: &syn::Type, input: &syn::Path, pattern: &syn::Pat
         if input.segments.len() != pattern.segments.len() {
             Err("Path segment lengths are not the same")
         } else {
-            for (input_segment, pattern_segment) in input.segments.iter().zip(pattern.segments.iter()) {
-                match_type_path_args(&input_segment.arguments, &pattern_segment.arguments, wildcards)?;
+            for (input_segment, pattern_segment) in
+                input.segments.iter().zip(pattern.segments.iter())
+            {
+                if input_segment.ident.to_string() != pattern_segment.ident.to_string() {
+                    return Err("Path segment identifiers are not the same");
+                }
+                match_type_path_args(
+                    &input_segment.arguments,
+                    &pattern_segment.arguments,
+                    wildcards,
+                )?;
             }
             Ok(wildcards.clone())
         }
@@ -196,14 +243,21 @@ fn match_type_path(full_input: &syn::Type, input: &syn::Path, pattern: &syn::Pat
 }
 
 /// Matches the arguments of a path ie: `<...>`.
-fn match_type_path_args(input: &PathArguments, pattern: &PathArguments, wildcards: &mut Wildcards) -> Result<Wildcards, &'static str> {
+fn match_type_path_args(
+    input: &PathArguments,
+    pattern: &PathArguments,
+    wildcards: &mut Wildcards,
+) -> Result<Wildcards, &'static str> {
     match (&input, &pattern) {
         // Always match if the pattern is empty, but still capture wildcards.
-        (_, PathArguments::None) => {},
+        (_, PathArguments::None) => {}
         // If the pattern is empty <>, we match if the input is empty as well.
-        (PathArguments::None, PathArguments::AngleBracketed(args)) if args.args.len() == 0 => {},
+        (PathArguments::None, PathArguments::AngleBracketed(args)) if args.args.len() == 0 => {}
 
-        (PathArguments::AngleBracketed(input_args), PathArguments::AngleBracketed(pattern_args)) => {
+        (
+            PathArguments::AngleBracketed(input_args),
+            PathArguments::AngleBracketed(pattern_args),
+        ) => {
             if input_args.args.len() != pattern_args.args.len() {
                 return Err("Path argument lengths are not the same");
             }
@@ -212,24 +266,33 @@ fn match_type_path_args(input: &PathArguments, pattern: &PathArguments, wildcard
                     (GenericArgument::Type(input_arg), GenericArgument::Type(pattern_arg)) => {
                         match_type_recursive(&input_arg, &pattern_arg, wildcards)?;
                     }
-                    (GenericArgument::Lifetime(input_arg), GenericArgument::Lifetime(pattern_arg)) => {
+                    (
+                        GenericArgument::Lifetime(input_arg),
+                        GenericArgument::Lifetime(pattern_arg),
+                    ) => {
                         if pattern_arg.ident.to_string() != "_" {
                             if input_arg.ident.to_string() != pattern_arg.ident.to_string() {
                                 return Err("Lifetime mismatch");
                             }
                         } else {
-                            wildcards.track_wildcard(&pattern_arg.ident.to_string(), &pattern_arg.ident);
+                            wildcards
+                                .track_lifetime(&pattern_arg.ident.to_string(), &pattern_arg.ident);
                         }
                     }
                     _ => {
-                        if input_arg.to_token_stream().to_string() != pattern_arg.to_token_stream().to_string() {
+                        if input_arg.to_token_stream().to_string()
+                            != pattern_arg.to_token_stream().to_string()
+                        {
                             return Err("Path argument types are not the same");
                         }
                     }
                 }
             }
         }
-        (_, PathArguments::Parenthesized(..)) => panic!("Unsupported parenthesized arguments: {:?}", input.to_token_stream().to_string()),
+        (_, PathArguments::Parenthesized(..)) => panic!(
+            "Unsupported parenthesized arguments: {:?}",
+            input.to_token_stream().to_string()
+        ),
         _ => {
             return Err("Path arguments are not the same");
         }
@@ -237,115 +300,157 @@ fn match_type_path_args(input: &PathArguments, pattern: &PathArguments, wildcard
     Ok(wildcards.clone())
 }
 
-fn render(result: syn::Type, matched: &Wildcards, input: &TypeMatch) -> proc_macro2::TokenStream {
+/// Renders a type based on the matched wildcards. We render by updating the type in-place.
+fn render(mut result: syn::Type, matched: &Wildcards, input: &TypeMatch) -> syn::Type {
+    // TODO: This clones a lot, but does it really matter?
     use syn::Type::*;
-    match result {
+    match &mut result {
+        // _T => _T: copy generics from _T verbatim
+        // _T => _T<>: copy path to _T but remove generics (_T must be a Path type)
+        // _T => _T<X, Y>: copy path to _T but set generics (_T must be a Path type)
+        // _T<X> => _T: copy path to _T only (_T must be a Path type)
         Path(path) => {
-            let mut out = proc_macro2::TokenStream::new();
-            let mut is_wildcard = false;
+            // If the path is a wildcard, copy the wildcard type
             if path.path.segments.len() == 1 {
                 if let Some(first) = path.path.segments.first() {
                     if first.ident.to_string().starts_with('_') {
-                        if let Some(wildcard) = matched.wildcards.get(&first.ident.to_string()) {
-                            out.extend(wildcard.clone());
-                            is_wildcard = true;
+                        let Some(wildcard) = matched.wildcards.get(&first.ident.to_string()) else {
+                            panic!("Unknown wildcard: {:?}", first.ident.to_string());
+                        };
+
+                        // If the pattern contains a final segment with arguments, the wildcard must be a Path type
+                        if let Some(args) = path.path.segments.last_mut() {
+                            if !matches!(args.arguments, PathArguments::None) {
+                                match wildcard {
+                                    Path(wildcard_path) => {
+                                        let last_segment =
+                                            path.path.segments.last_mut().unwrap().clone();
+
+                                        *path = wildcard_path.clone();
+
+                                        path.path.segments.last_mut().unwrap().arguments =
+                                            last_segment.arguments;
+
+                                        for segment in &mut path.path.segments {
+                                            segment.arguments = render_path_args(
+                                                segment.arguments.clone(),
+                                                matched,
+                                                input,
+                                            );
+                                        }
+                                        return result;
+                                    }
+                                    _ => {
+                                        panic!(
+                                            "Wildcard is not a Path type,: {:?}",
+                                            wildcard.to_token_stream().to_string()
+                                        );
+                                    }
+                                }
+                            }
                         }
+
+                        return wildcard.clone();
                     }
                 }
             }
 
-            if is_wildcard {
-                out.extend(render_path_args(path.path.segments.last().unwrap().arguments.clone(), matched, input));
-            } else {
-                for segment in path.path.segments {
-                    out.extend(segment.ident.to_token_stream());
-                    out.extend(render_path_args(segment.arguments, matched, input));
-                }
+            for segment in &mut path.path.segments {
+                segment.arguments = render_path_args(segment.arguments.clone(), matched, input);
             }
 
-            return out;
+            return result;
         }
         Reference(reference) => {
-            let mut out = proc_macro2::TokenStream::new();
-            out.extend(quote! { &});
-            if let Some(mutability) = reference.mutability {
-                out.extend(mutability.into_token_stream());
-            }
-            if let Some(lifetime) = reference.lifetime {
+            if let Some(lifetime) = &mut reference.lifetime {
                 if lifetime.ident.to_string().starts_with("_") && lifetime.ident != "_" {
-                    out.extend(matched.wildcards.get(&lifetime.ident.to_string()).unwrap().clone());
-                } else {
-                    out.extend(lifetime.into_token_stream());
+                    *lifetime = matched
+                        .lifetimes
+                        .get(&lifetime.ident.to_string())
+                        .expect("Unknown lifetime")
+                        .clone();
                 }
             }
-            out.extend(render(*reference.elem, matched, input));
-            return out;
+            reference.elem = Box::new(render(*reference.elem.clone(), matched, input));
+            return result;
+        }
+        Slice(slice) => {
+            slice.elem = Box::new(render(*slice.elem.clone(), matched, input));
+            return result;
         }
         Macro(macro_type) => {
             if macro_type.mac.path.segments.len() == 1 {
                 if let Some(first) = macro_type.mac.path.segments.first() {
                     if first.ident == "recurse" {
-                        let recurse_type = syn::parse2::<syn::Type>(macro_type.mac.tokens.clone()).expect("Recursive call failed");
-                        let rendered = render(recurse_type, &matched, input);
-                        let recurse_type = syn::parse::<syn::Type>(rendered.into()).expect("Recursive call failed");
+                        let recurse_input_type =
+                            syn::parse2::<syn::Type>(macro_type.mac.tokens.clone())
+                                .expect("Recursive call failed");
+                        let recurse_type = render(recurse_input_type, &matched, input);
 
                         for arm in &input.arms {
                             if let Ok(matched) = match_type(&recurse_type, &arm.pattern) {
-                                let result: proc_macro2::TokenStream = render(arm.result.clone(), &matched, input).into();
-                                return proc_macro2::TokenStream::from(quote! { #result });
+                                return render(arm.result.clone(), &matched, input);
                             }
                         }
-                        panic!("No recursive match found for {:?}", recurse_type.to_token_stream().to_string());
+                        panic!(
+                            "No recursive match found for {:?}",
+                            recurse_type.to_token_stream().to_string()
+                        );
                     }
                 }
             }
-            panic!("Unhandled macro: {:?}", macro_type.mac.path.to_token_stream().to_string());
+            panic!(
+                "Unhandled macro: {:?}",
+                macro_type.mac.path.to_token_stream().to_string()
+            );
         }
         _ => {
             panic!("Unhandled type: {:?}", result.to_token_stream().to_string());
-        },
+        }
     }
 }
 
-fn render_path_args(args: PathArguments, matched: &Wildcards, input: &TypeMatch) -> proc_macro2::TokenStream {
-    let mut out = proc_macro2::TokenStream::new();
-    match args {
-        PathArguments::None => {
-        }
+fn render_path_args(
+    mut args: PathArguments,
+    matched: &Wildcards,
+    input: &TypeMatch,
+) -> PathArguments {
+    match &mut args {
+        PathArguments::None => {}
         PathArguments::AngleBracketed(args) => {
-            out.extend(quote! { <});
-            for arg in args.args {
+            for arg in &mut args.args {
                 match arg {
                     GenericArgument::Type(arg) => {
-                        out.extend(render(arg, matched, input));
+                        *arg = render(arg.clone(), matched, input);
                     }
                     GenericArgument::Lifetime(arg) => {
                         if arg.ident.to_string().starts_with("_") && arg.ident != "_" {
-                            out.extend(matched.wildcards.get(&arg.ident.to_string()).unwrap().clone());
-                        } else {
-                            out.extend(arg.into_token_stream());
+                            *arg = matched
+                                .lifetimes
+                                .get(&arg.ident.to_string())
+                                .expect("Unknown lifetime")
+                                .clone();
                         }
                     }
-                    arg => {
-                        out.extend(arg.into_token_stream());
-                    }
+                    _ => {}
                 }
-                out.extend(quote! { ,});
             }
-            out.extend(quote! { >});
         }
         _ => {
-            panic!("Unhandled path arguments: {:?}", args.to_token_stream().to_string());
+            panic!(
+                "Unhandled path arguments: {:?}",
+                args.to_token_stream().to_string()
+            );
         }
     }
-    out
+    args
 }
 
 /// Matches something like this:
-/// 
+///
 /// ```
 /// use type_mapper::map_types;
-/// 
+///
 /// let x: map_types!(
 ///     match Vec<T> {
 ///         Vec<_> => u8,
@@ -363,7 +468,8 @@ pub fn map_types(input: TokenStream) -> TokenStream {
 
         match match_type(&input.match_type, &arm.pattern) {
             Ok(matched) => {
-                let result: proc_macro2::TokenStream = render(arm.result.clone(), &matched, &input).into();
+                let result: proc_macro2::TokenStream =
+                    render(arm.result.clone(), &matched, &input).into_token_stream();
                 return TokenStream::from(quote! { #result });
             }
             Err(e) => {
@@ -372,7 +478,11 @@ pub fn map_types(input: TokenStream) -> TokenStream {
         }
     }
 
-    panic!("No match found for {:?}\n{}", input.match_type.to_token_stream().to_string(), out);
+    panic!(
+        "No match found for {:?}\n{}",
+        input.match_type.to_token_stream().to_string(),
+        out
+    );
 }
 
 struct AssertTypeMatches {
@@ -402,11 +512,29 @@ pub fn assert_type_matches(input: TokenStream) -> TokenStream {
             if let Some(message) = input.message {
                 panic!("{}", message.value());
             } else {
-                panic!("Type mismatch: {:?} !~ {:?}: {e}", input.input_type.to_token_stream().to_string(), input.expected_type.to_token_stream().to_string());
+                panic!(
+                    "Type mismatch: {:?} !~ {:?}: {e}",
+                    input.input_type.to_token_stream().to_string(),
+                    input.expected_type.to_token_stream().to_string()
+                );
             }
         }
+        Ok(_) => TokenStream::new(),
+    }
+}
+
+#[proc_macro]
+pub fn assert_type_not_matches(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as AssertTypeMatches);
+
+    match match_type(&input.input_type, &input.expected_type) {
+        Err(_) => TokenStream::new(),
         Ok(_) => {
-            TokenStream::new()
+            panic!(
+                "Type matches when it should not: {:?} ~ {:?}",
+                input.input_type.to_token_stream().to_string(),
+                input.expected_type.to_token_stream().to_string()
+            );
         }
     }
 }

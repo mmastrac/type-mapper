@@ -31,10 +31,10 @@ type-mapper = "0.x.y"
 
 ### Basic Type Matching
 
-The crate provides a `assert_type_matches!` macro for testing type matches.
+The crate provides a `assert_type_matches!` and `assert_type_not_matches!` macros for testing type matches.
 
 ```rust
-use type_mapper::{assert_type_matches, map_types};
+use type_mapper::{assert_type_matches, assert_type_not_matches, map_types};
 
 // Simple type matching
 assert_type_matches!(Vec<u8>, Vec<u8>);
@@ -46,6 +46,12 @@ assert_type_matches!(Vec<u8>, Vec<_>);
 assert_type_matches!(u8, _);
 assert_type_matches!(u8, _T);
 assert_type_matches!(u8, _T<>);
+assert_type_not_matches!(u8, _T<_U>);
+
+// Type mismatch
+assert_type_not_matches!(Vec<u8>, Vec<u16>);
+assert_type_not_matches!(u8, u16);
+assert_type_not_matches!(std::sync::MutexGuard<'a, u8>, std::sync::MutexGuard<'_>);
 ```
 
 ### Lifetime Handling
@@ -102,7 +108,9 @@ The crate supports several pattern matching features:
 - `_` - Wildcard for any type
 - `_T` - Named wildcard that can be referenced in the result
 - `_T<T>` - Generic type matching
-- `'_` - Wildcard lifetime
+- `_T<>` - Generic type matching with no generics (WARNING: rustfmt may eat the `<>` if you don't use `#[rustfmt::skip]`)
+- `'_` - Wildcard lifetime (will also match no lifetime in a reference)
+- `'_A` - Named wildcard lifetime (will also match no lifetime in a reference)
 - `'a` - Named lifetime matching
 - `recurse!(_T)` - Recursive type transformation
 
