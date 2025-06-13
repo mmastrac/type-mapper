@@ -147,9 +147,11 @@ assert_type_eq_all!(
 macro_rules! lifetime_to_static {
     ($ty:ty) => {
         map_types!(
+            // TODO: We can use <'_, __> once that is supported
             match $ty {
-                _T<'_, _G> => _T<'static, _G>,
-                &'_ _T => &'static _T,
+                _T<'_, _G> => _T<'static, recurse!(_G)>,
+                &'_ _T => &'static recurse!(_T),
+                _T<_G> => _T<recurse!(_G)>,
                 _T => _T
             }
         )
@@ -160,6 +162,11 @@ assert_type_eq_all!(
     lifetime_to_static!(std::sync::MutexGuard<'_, u8>),
     lifetime_to_static!(std::sync::MutexGuard<'a, u8>),
     std::sync::MutexGuard<'static, u8>,
+);
+
+assert_type_eq_all!(
+    lifetime_to_static!(std::sync::MutexGuard<'a, std::marker::PhantomData<&'a u8>>),
+    std::sync::MutexGuard<'static, std::marker::PhantomData<&'static u8>>,
 );
 
 macro_rules! unwrap_option {
