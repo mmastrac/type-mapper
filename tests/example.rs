@@ -7,6 +7,23 @@ use type_mapper::{assert_type_matches, assert_type_not_matches, map_types};
 mod match_tests {
     use super::*;
 
+    assert_type_matches!(u8, _);                  // matches wildcard
+    assert_type_matches!(u8, _T);                 // matches named wildcard
+    assert_type_matches!(u8, _T<>);               // matches wildcard with no generics
+
+    assert_type_not_matches!(u8, u16);            // type mismatch
+    assert_type_not_matches!(u8, _T<u8>);         // u8 has not generics
+
+
+    assert_type_matches!([u8; 1], _);             // matches wildcard
+    assert_type_matches!([u8; 1], _T);            // matches named wildcard
+    assert_type_matches!([u8; 1], _T<>);          // matches wildcard with no generics
+
+    assert_type_not_matches!([u8; 1], [u8; 2]);   // type mismatch
+    assert_type_not_matches!([u8; 1], u8);        // type mismatch
+    assert_type_not_matches!([u8; 1], _T<u8>);    // u8 has no generics
+
+
     assert_type_matches!(Vec<u8>, Vec<u8>); // matches exact type
     assert_type_matches!(Vec<u8>, Vec);     // matches naked type
     assert_type_matches!(Vec<u8>, _T<u8>);  // matches wildcard with generics
@@ -15,12 +32,6 @@ mod match_tests {
     assert_type_not_matches!(Vec<u8>, Vec<u16>); // type mismatch
     assert_type_not_matches!(Vec<u8>, Vec<>);    // no generics
 
-    assert_type_matches!(u8, _);                  // matches wildcard
-    assert_type_matches!(u8, _T);                 // matches named wildcard
-    assert_type_matches!(u8, _T<>);               // matches wildcard with no generics
-
-    assert_type_not_matches!(u8, u16);            // type mismatch
-    assert_type_not_matches!(u8, _T<u8>);         // u8 has not generics
 
     assert_type_matches!(std::sync::MutexGuard<u8>, _T);                        // matches wildcard
     assert_type_matches!(std::sync::MutexGuard, _T);                            // matches wildcard

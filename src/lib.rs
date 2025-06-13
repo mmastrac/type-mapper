@@ -106,6 +106,26 @@ fn match_type_recursive(
             Ok(wildcards.clone())
         }
 
+        (Path(input_path), Path(pattern_path)) => {
+            match_type_path(&input_path.path, &pattern_path.path, wildcards)
+        }
+        (input, Path(pattern_path)) => {
+            if pattern_path.path.segments.len() == 1 {
+                if let Some(first) = pattern_path.path.segments.first() {
+                    if first.ident.to_string().starts_with('_') {
+                        let last_args = pattern_path.path.segments.last().unwrap();
+                        if matches!(&last_args.arguments, PathArguments::None)
+                            || matches!(&last_args.arguments, PathArguments::AngleBracketed(args) if args.args.len() == 0)
+                        {
+                            wildcards.track_wildcard(&first.ident.to_string(), &input);
+                            return Ok(wildcards.clone());
+                        }
+                    }
+                }
+            }
+            Err("Type shapes are not the same")
+        }
+
         (Array(input), Array(pattern)) => {
             if input.len.to_token_stream().to_string() != pattern.len.to_token_stream().to_string()
             {
@@ -144,9 +164,6 @@ fn match_type_recursive(
         (Never(_), Never(_)) => Ok(wildcards.clone()),
         (Paren(input), Paren(pattern)) => {
             match_type_recursive(&input.elem, &pattern.elem, wildcards)
-        }
-        (Path(input_path), Path(pattern_path)) => {
-            match_type_path(&input_path.path, &pattern_path.path, wildcards)
         }
         (Ptr(input), Ptr(pattern)) => match_type_recursive(&input.elem, &pattern.elem, wildcards),
         (Reference(input), Reference(pattern)) => {
