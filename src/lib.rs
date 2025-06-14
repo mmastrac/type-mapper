@@ -89,6 +89,8 @@ fn match_type_recursive(
     mut pattern: &syn::Type,
     wildcards: &mut Wildcards,
 ) -> Result<Wildcards, &'static str> {
+    #![allow(unknown_lints)]
+    // Needs #![feature(non_exhaustive_omitted_patterns_lint)]
     #![cfg_attr(test, deny(non_exhaustive_omitted_patterns))]
 
     while let Group(grouped_input) = input {
@@ -504,6 +506,7 @@ pub fn map_types(input: TokenStream) -> TokenStream {
 
 struct AssertTypeMatches {
     input_type: syn::Type,
+    #[allow(unused)]
     comma: Token![,],
     expected_type: syn::Type,
     message: Option<syn::LitStr>,

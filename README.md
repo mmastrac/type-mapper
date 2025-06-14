@@ -29,6 +29,70 @@ type-mapper = "0.x.y"
 
 ## Examples
 
+### Type Declaration
+
+The `map_types!` macro can be used in a type position:
+
+```rust
+use type_mapper::map_types;
+
+/// This is an unlikely usage, but macros will generate code like this:
+static X: map_types!(
+    match Vec<Option<u8>> {
+        Vec<_T> => recurse!(_T),
+        Option<_T> => recurse!(_T),
+        _T => _T,
+    }
+) = 1_u8;
+```
+
+It's mostly useful when writing macros that need to transform types:
+
+```rust
+use type_mapper::map_types;
+use static_assertions::assert_type_eq_all;
+
+macro_rules! with_static_lifetime {
+    ($ty:ty) => {
+        map_types!(
+            match $ty {
+                &'_ _T => &'static recurse!(_T),
+                _T<'_, _U> => _T<'static, recurse!(_U)>,
+                _T<'_, _U, _V> => _T<'static, recurse!(_U), recurse!(_V)>,
+                _T => _T,
+            }
+        )
+    }
+}
+
+trait MyTrait<T> {
+    /// Our type
+    type Type;
+    /// Our type but with static lifetimes
+    type Static;
+}
+
+macro_rules! define_trait_for {
+    ($lt:lifetime $name:ident $ty:ty) => {
+        impl <$lt> MyTrait<$ty> for $name where $name: $lt {
+            type Type = $ty;
+            type Static = with_static_lifetime!($ty);
+        }
+    }
+}
+
+struct MyStruct{}
+
+define_trait_for!('a MyStruct (u8, u8));
+define_trait_for!('a MyStruct (&'a u8, &'a u8));
+
+assert_type_eq_all!(<MyStruct as MyTrait<(u8, u8)>>::Type, (u8, u8));
+assert_type_eq_all!(<MyStruct as MyTrait<(u8, u8)>>::Static, (u8, u8));
+// This doesn't compile because we can't test against that missing lifetime
+// assert_type_eq_all!(<MyStruct as MyTrait<(&'a u8, &'a u8)>>::Type, (&'static u8, &'static u8));
+assert_type_eq_all!(<MyStruct as MyTrait<(&'static u8, &'static u8)>>::Static, (&'static u8, &'static u8));
+```
+
 ### Basic Type Matching
 
 The crate provides a `assert_type_matches!` and `assert_type_not_matches!` macros for testing type matches.
